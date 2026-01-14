@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
+# from logging import info
 import shlex
-import sys
+
+# import sys
 from typing import Callable
 
 from textual.app import App, ComposeResult
@@ -13,7 +15,19 @@ from ibx_sdk.nios.exceptions import WapiRequestException
 from ibx_sdk.nios.gift import Gift
 
 # TODO: read file for username and password
-wapi = Gift()
+
+
+def grid_info(self) -> None:
+    if self.wapi is None:
+        self._set_grid_info("Not Connected")
+        return
+    infoblox_name = self.wapi.get("grid", params={"_return_fields": ["name"]})
+    if infoblox_name != 200:
+        self._set_grid_info(
+            f"{infoblox_name.status_code} {infoblox_name.json().get("code")} {infoblox_name.json().get("text")}"
+        )
+    else:
+        self._set_grid_info(f"Infoblox Grid: {infoblox_name.json().get("name")}\n")
 
 
 class Pane(Static):
@@ -25,6 +39,9 @@ class Output(RichLog):
 
 
 class NiosfileManager(App):
+    def __init__(self):
+        self.wapi = Gift()
+
     """A Textual app to manage files on NIOS Grids."""
 
     BINDINGS = [("d", "toggle_dark", "Toggle dark mode")]
@@ -106,13 +123,13 @@ class NiosfileManager(App):
 
         try:
             wapi.connect(username=username, password=password)
+            self.wapi = wapi
+            self._set_logs(f"Connected to {wapi.grid_mgr} as {username}")
+            grid_info(self.wapi)
         except WapiRequestException as err:
             self._set_logs(f"Connect failed: {err}")
             self.wapi = None
             return
-
-        self.wapi = wapi
-        self._set_logs(f"Connected to {wapi.grid_mgr} as {username}")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         raw = event.value.strip()
