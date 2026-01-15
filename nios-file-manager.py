@@ -127,7 +127,7 @@ class NiosfileManager(App):
             )
         else:
             self._set_grid_info(
-                f"Infoblox Grid: {infoblox_name.json()[0].get("name")}\n"
+                f"Infoblox Grid: {infoblox_name.json()[0].get("name")}\nGrid Master: {self.wapi.grid_mgr}\n"
             )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
