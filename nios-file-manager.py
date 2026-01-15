@@ -17,19 +17,6 @@ from ibx_sdk.nios.gift import Gift
 # TODO: read file for username and password
 
 
-def grid_info(self) -> None:
-    if self.wapi is None:
-        self._set_grid_info("Not Connected")
-        return
-    infoblox_name = self.wapi.get("grid", params={"_return_fields": ["name"]})
-    if infoblox_name != 200:
-        self._set_grid_info(
-            f"{infoblox_name.status_code} {infoblox_name.json().get("code")} {infoblox_name.json().get("text")}"
-        )
-    else:
-        self._set_grid_info(f"Infoblox Grid: {infoblox_name.json().get("name")}\n")
-
-
 class Pane(Static):
     """Box with Label"""
 
@@ -39,9 +26,6 @@ class Output(RichLog):
 
 
 class NiosfileManager(App):
-    def __init__(self):
-        self.wapi = Gift()
-
     """A Textual app to manage files on NIOS Grids."""
 
     BINDINGS = [("d", "toggle_dark", "Toggle dark mode")]
@@ -96,6 +80,7 @@ class NiosfileManager(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.wapi: Gift = Gift()
         self.query_one("#cmd", Input).focus()
 
     # Commands for input
@@ -118,18 +103,32 @@ class NiosfileManager(App):
             self._set_logs("Username/password cannot be empty")
             return
 
-        wapi.grid_mgr = grid_mgr
-        wapi.wapi_ver = "2.13"
+        self.wapi.grid_mgr = grid_mgr
+        self.wapi.wapi_ver = "2.13"
 
         try:
-            wapi.connect(username=username, password=password)
-            self.wapi = wapi
-            self._set_logs(f"Connected to {wapi.grid_mgr} as {username}")
-            grid_info(self.wapi)
+            self.wapi.connect(username=username, password=password)
+            self._set_logs(f"Connected to {self.wapi.grid_mgr} as {username}")
         except WapiRequestException as err:
             self._set_logs(f"Connect failed: {err}")
-            self.wapi = None
+            self._set_grid_info(("Not Connected"))
+            self.wapi = Gift()
             return
+        self.grid_info()
+
+    def grid_info(self) -> None:
+        if self.wapi is None:
+            self._set_grid_info("Not Connected")
+            return
+        infoblox_name = self.wapi.get("grid", params={"_return_fields": ["name"]})
+        if infoblox_name.status_code != 200:
+            self._set_grid_info(
+                f"{infoblox_name.status_code} {infoblox_name.json()[0].get("code")} {infoblox_name.json()[0].get("text")}"
+            )
+        else:
+            self._set_grid_info(
+                f"Infoblox Grid: {infoblox_name.json()[0].get("name")}\n"
+            )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         raw = event.value.strip()
@@ -160,7 +159,7 @@ class NiosfileManager(App):
         self.query_one("#command", RichLog).write(text)
 
     def _set_grid_info(self, text: str) -> None:
-        self.query_one("#gridinfo", RichLog).write(text)
+        self.query_one("#gridinfo", Static).update(text)
 
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""
