@@ -3,12 +3,14 @@
 # from logging import info
 import shlex
 
-# import sys
+from datetime import datetime
 from typing import Callable
 
+# Textual and Rich Imports
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, RichLog, Static, Input
+from rich.table import Table, Column
 
 # from ibx_sdk.logger.ibx_logger import init_logger, increase_log_level
 from ibx_sdk.nios.exceptions import WapiRequestException
@@ -70,7 +72,7 @@ class NiosfileManager(App):
         """Create child widgets for the app."""
         yield Header()
         with Horizontal():
-            yield Pane("NIOS Files", id="files")
+            yield Output(name="Files", id="files")
 
             with Vertical(id="Manager"):
                 yield Pane("Grid Information", id="gridinfo")
@@ -85,7 +87,12 @@ class NiosfileManager(App):
 
     # Commands for input
     def cmd_help(self, args: list[str]) -> None:
-        self._set_logs("Commands:\n" "- help\n" "- connect grid user password\n")
+        self._set_logs(
+            "Commands:\n"
+            "- help\n"
+            "- connect grid user password\n"
+            "- list - show current files on NIOS grid\n"
+        )
 
     def cmd_connect(self, args: list[str]) -> None:
         # Expected: connect <grid_mgr> <username> <password>
@@ -116,43 +123,68 @@ class NiosfileManager(App):
             return
         self.grid_info()
 
+    def cmd_list(self, args: list[str]) -> None:
+        table = Table(
+            Column(header="Name", justify="center", style="green"),
+            Column(header="Type", justify="center", style="white"),
+            Column(header="Modified Time", justify="center", style="white"),
+            show_header=True,
+            header_style="bold",
+            row_styles=["dim", ""],
+        )
+        current_files = self.wapi.get(
+            "tftpfiledir",
+            params={
+                "directory": "/",
+                "_return_fields": ["name", "type", "last_modify"],
+            },
+        )
+        if current_files.status_code != 200:
+            self._set_files(
+                f"{current_files.status_code} {current_files.json()[0].get("text")}"
+            )
+        else:
+            for f in current_files.json():
+                modify_date = datetime.fromtimestamp(f["last_modify"])
+                table.add_row(f["name"], f["type"], str(modify_date))
+        self._set_files(table)
+
     def grid_info(self) -> None:
         if self.wapi is None:
             self._set_grid_info("Not Connected")
             return
-        infoblox_name = self.wapi.get("grid", params={"_return_fields": ["name"]})
+        infoblox_name = self.wapi.get(
+            "grid", params={"_return_fields": ["name", "service_status"]}
+        )
         if infoblox_name.status_code != 200:
             self._set_grid_info(
-                f"{infoblox_name.status_code} {infoblox_name.json()[0].get("code")} {infoblox_name.json()[0].get("text")}"
+                f"{infoblox_name.status_code} {infoblox_name.json()[0].get('code')} {infoblox_name.json()[0].get('text')}"
             )
         else:
             self._set_grid_info(
-                f"Infoblox Grid: {infoblox_name.json()[0].get("name")}\nGrid Master: {self.wapi.grid_mgr}\n"
+                f"Infoblox Grid: {infoblox_name.json()[0].get('name')}\nGrid Master: {self.wapi.grid_mgr}\nService Status: {infoblox_name.json()[0].get('service_status')}\n"
             )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         raw = event.value.strip()
         event.input.value = ""
-
         if not raw:
             return
-
         try:
             parts = shlex.split(raw)
         except ValueError as e:
             self._set_logs(f"Parse error: {e}")
             return
-
         cmd, *args = parts
         commands: dict[str, Callable[[list[str]], None]] = {
             "help": self.cmd_help,
             "connect": self.cmd_connect,
+            "list": self.cmd_list,
         }
         fn = commands.get(cmd.lower())
         if fn is None:
             self._set_logs(f"Unknown command: {cmd!r} (try: help)")
             return
-
         fn(args)
 
     def _set_logs(self, text: str) -> None:
@@ -160,6 +192,9 @@ class NiosfileManager(App):
 
     def _set_grid_info(self, text: str) -> None:
         self.query_one("#gridinfo", Static).update(text)
+
+    def _set_files(self, text) -> None:
+        self.query_one("#files", RichLog).write(text)
 
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""
