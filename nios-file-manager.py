@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 # from logging import info
 import shlex
 
@@ -11,6 +13,10 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, RichLog, Static, Input
 from rich.table import Table, Column
+
+from textual.screen import ModalScreen
+from textual.widgets import OptionList, Button, Label
+from textual.widgets.option_list import Option
 
 # from ibx_sdk.logger.ibx_logger import init_logger, increase_log_level
 from ibx_sdk.nios.exceptions import WapiRequestException
@@ -25,6 +31,44 @@ class Pane(Static):
 
 class Output(RichLog):
     """Show Command Output"""
+
+
+class FilePicker(ModalScreen[dict | None]):
+    DEFAULT_CSS = """
+    FilePicker { align: center middle; }
+    #dialog { width: 80%; height: 80%; border: thick $primary; padding: 1; background: $surface; }
+    #choices { height: 1fr; }
+    """
+
+    def __init__(self, files: list[dict]):
+        super().__init__()
+        self.files = files
+
+    def compose(self) -> ComposeResult:
+        # Store the index as the option id so we can map back to the dict
+        yield OptionList(
+            *(
+                Option(f"{name}", id=str(ref))
+                for d in self.files
+                for name, ref in d.items()
+            ),
+            id="choices",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#choices", OptionList).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        ref = event.option_id
+        if ref is None:
+            self.dismiss(None)
+            return
+        selected = next((f for f in self.files if f.get("_ref") == ref), None)
+        self.dismiss(selected)
 
 
 class NiosfileManager(App):
@@ -83,6 +127,7 @@ class NiosfileManager(App):
 
     def on_mount(self) -> None:
         self.wapi: Gift = Gift()
+        self.files_cache: list[dict] = []
         self.query_one("#cmd", Input).focus()
 
     # Commands for input
@@ -92,6 +137,7 @@ class NiosfileManager(App):
             "- help\n"
             "- connect grid user password\n"
             "- list - show current files on NIOS grid\n"
+            "- download - download file to local system"
         )
 
     def cmd_connect(self, args: list[str]) -> None:
@@ -147,7 +193,28 @@ class NiosfileManager(App):
             for f in current_files.json():
                 modify_date = datetime.fromtimestamp(f["last_modify"])
                 table.add_row(f["name"], f["type"], str(modify_date))
+                if f["type"] == "FILE":
+                    self.files_cache.append({f["name"]: f["_ref"]})
         self._set_files(table)
+
+    def cmd_download(self, args: list[str]) -> None:
+        if not getattr(self, "files_cache", None):
+            self._set_logs("No files loaded yet. Run your list command first.")
+            return
+
+        def _on_picked(self, selected: dict | None) -> None:
+            if selected is None:
+                self._set_logs("[yellow]Cancelled[/yellow]")
+                return
+
+            self._set_logs(
+                f"Selected: [blue]{selected.get('name')}[/blue] ref={selected.get('_ref')}"
+            )
+
+        # TODO: call your real download function here
+        # self.download_file(selected)
+
+        self.push_screen(FilePicker(self.files_cache), _on_picked)
 
     def grid_info(self) -> None:
         if self.wapi is None:
@@ -180,6 +247,7 @@ class NiosfileManager(App):
             "help": self.cmd_help,
             "connect": self.cmd_connect,
             "list": self.cmd_list,
+            "download": self.cmd_download,
         }
         fn = commands.get(cmd.lower())
         if fn is None:
